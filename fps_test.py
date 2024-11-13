@@ -2,9 +2,17 @@ from ultralytics import YOLO
 import time
 import cv2
 import numpy as np
+import torch
 
 def test_yolo_streaming(model_path, video_url, display_time=30):
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f"\nUsing device: {device}")
+    if device == 'cuda':
+        print(f"GPU Model: {torch.cuda.get_device_name(0)}")
+        print(f"Current GPU Memory Usage: {torch.cuda.memory_allocated(0)/1024**2:.2f} MB")
+
     model = YOLO(model_path)
+    model.to(device)
 
     # frame_count = 0
     fps_list = []  
@@ -16,7 +24,8 @@ def test_yolo_streaming(model_path, video_url, display_time=30):
         results = model.track(
             source=video_url,
             stream=True,
-            show=True
+            show=True,
+            device=device
         )
 
         for result in results:
