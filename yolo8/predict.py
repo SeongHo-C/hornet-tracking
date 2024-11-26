@@ -127,15 +127,29 @@ class WaspTracker:
                     error_dist = np.sqrt(error_x**2 + error_y**2)
                     prediction_time = (pred_time - (current_time - step * self.behavior_params[self.current_behavior]['dt']))
                     
-                    errors.append((step, prediction_time, error_dist))
+                    # 오차 수준 평가
+                    if error_dist < 10:
+                        accuracy_level = "HIGH"
+                        # color = (0, 255, 0)  # 녹색
+                    elif error_dist < 30:
+                        accuracy_level = "MEDIUM"
+                        # color = (0, 255, 255)  # 노란색
+                    else:
+                        accuracy_level = "LOW"
+                        # color = (0, 0, 255)  # 빨간색
+                
+                    errors.append((step, prediction_time, error_dist, accuracy_level))
                     print(f"Prediction Step {step} ({prediction_time:.2f}s ahead):")
                     print(f"Predicted: ({pred_x:.2f}, {pred_y:.2f})")
                     print(f"Actual: ({closest_actual[1]:.2f}, {closest_actual[2]:.2f})")
-                    print(f"Error Distance: {error_dist:.2f} pixels")
+                    print(f"Error Distance: {error_dist:.2f} pixels ({accuracy_level} accuracy)")
+                    print(f"Error Percentage: {(error_dist/30)*100:.1f}% of wasp size")  # 말벌 크기 기준
                     print("----------------------")
                 
-                # 사용한 예측 삭제
-                del self.prediction_history[pred_time]
+                    # 사용한 예측 삭제
+                    del self.prediction_history[pred_time]
+            
+            return errors
     
     def predict_next(self, steps=5):
         if not self.initialized:
