@@ -7,28 +7,35 @@ print(f"GPU count: {torch.cuda.device_count()}")
 model = YOLO("yolov8s.pt")
 
 results = model.train(
-    data='../datasets/data.yaml',
-    epochs=1000,
-    batch=16,
-    imgsz=640,
-    device='0',
-    
-    # 기본 증강 설정
-    fliplr=0.5,          # 좌우반전 50% 확률
-    scale=0.5,           # 스케일 변경
-    translate=0.1,       # 이미지 이동
-    mosaic=0.0,          # 모자이크 비활성화 (초기에는 끄는 것 추천)
-    
-    # 다른 증강은 기본값 0으로 시작
-    hsv_h=0.0,          # HSV 색조
-    hsv_s=0.0,          # HSV 채도
-    hsv_v=0.0,          # HSV 명도
-    degrees=0.0,        # 회전
-    shear=0.0,          # 전단
-    perspective=0.0,    # 원근
-    flipud=0.0,         # 상하반전
-    mixup=0.0,          # 믹스업
+    data = '../datasets/data.yaml',
+    device = '0',
 
-    # save_period=-1
-    # patience=100
+    # 학습 기본 설정
+    epochs = 300, 
+    patience = 30,      # 조기종료 인내심 
+    warmup_epochs = 10, # 학습 초기에 학습률을 점진적으로 증가시키는 기간
+    imgsz = 800,
+    batch = 24,
+
+    # 옵티마이저 설정
+    lr0 = 0.001,           # 초기 학습률            
+    lrf = 0.0001,          # 최종 학습률 => 과적합 방지, 정확도 향상
+    weight_decay = 0.0005, # 가중치 감쇠, 과적합 방지
+    optimizer = 'AdamW',   # momentum과 적응적 학습률을 결합한 최적화 알고리즘
+    
+    # 데이터 증강
+    fliplr = 0.5,    # 좌우반전 50% 확률 
+    scale = 0.3,     # 스케일 변경 ±40%        
+    translate = 0.1, # 이동 ±10%    
+    mosaic = 0.8,    # 모자이크 증강 80% 확률
+    hsv_h = 0.015,   # 색조 ±1.5% 
+    hsv_s = 0.7,     # 채도 ±70%
+    hsv_v = 0.4,     # 명도 ±40%
+    degrees = 10,    # 회전 ±10도
+    
+    # 추가 설정
+    save_period = -1,
+    box = 4.5,    # 바운딩 박스 loss 가중치
+    cls = 1.0,    # 분류 loss 가중치
+    plots = True, # 학습 그래프 저장
 )
