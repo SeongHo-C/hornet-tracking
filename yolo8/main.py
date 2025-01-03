@@ -6,6 +6,7 @@ import base64 # 바이너리 데이터를 텍스트로 변환하기 위한 라�
 import torch
 from datetime import datetime
 from ultralytics import YOLO
+from tracker import ObjectTracker
 
 class VideoProcessor:
     def __init__(self):
@@ -21,10 +22,12 @@ class VideoProcessor:
         self.yolo_model = YOLO("weights/second_train.pt")
         self.yolo_model.to(self.device)
 
+        self.tracker = ObjectTracker()
+
     def initialize_camera(self):
         try:
             if self.camera is None:
-                self.camera = cv2.VideoCapture(0)
+                self.camera = cv2.VideoCapture('../resource/youtube5.mp4')
                 if not self.camera.isOpened():
                     raise RuntimeError("카메라를 열 수 없습니다.")
             
@@ -45,9 +48,19 @@ class VideoProcessor:
 
     def process_frame(self, frame):
         with torch.no_grad(): # 추론시 메모리 사용 감소
-            results = self.yolo_model(frame, conf = 0.6)
+            results = self.yolo_model(frame, conf = 0.7, iou = 0.5)
+            processed_frame = self.tracker.track_objects(frame, results[0].boxes)
         
-        return results[0].plot()
+        return processed_frame
+        # return results[0].plot
+
+    def change_resolution(self, width, height):
+        if self.camera is not None and self.camera.isOpened():
+            self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            print(f"Resolution changed to {width}x{height}")
+        else:
+            print("Camera is not initialized")
 
     def get_frame(self):
         if self.camera is None or not self.camera.isOpened():
@@ -57,7 +70,7 @@ class VideoProcessor:
         if not ret:
             return None
 
-        frame = cv2.resize(frame, (640, 480)) # 프레임 크기 축소
+        # frame = cv2.resize(frame, (640, 480)) # 프레임 크기 축소
 
         processed_frame = self.process_frame(frame) if self.is_detecting else frame
         _, buffer = cv2.imencode('.jpg', processed_frame, [cv2.IMWRITE_JPEG_QUALITY, 80]) # 화질 80%로 조정
@@ -110,6 +123,15 @@ class VideoProcessor:
                         'type': 'response',
                         'message': 'Camera streaming stopped'
                     }))
+                elif command == 'resolution_change':
+                    new_width = data.get['width']
+                    new_height = data.get['height']
+                    if new_width and new_height:
+                        self.change_resolution(new_width, new_height)
+                        await websocket.send(json.dumps({
+                            'type': 'response',
+                            'message': f'Resolution changed to {new_width}x{new_height}'
+                        }))
             elif command_type == 'detection':
                 if command == 'start':
                     if not self.is_detecting:
