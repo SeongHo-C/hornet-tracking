@@ -19,7 +19,7 @@ class VideoProcessor:
         print(f"Using device: {self.device}")
         
         # YOLO 모델 로드 및 GPU 설정
-        self.yolo_model = YOLO("weights/second_train.pt")
+        self.yolo_model = YOLO("weights/integrated_train.pt")
         self.yolo_model.to(self.device)
 
         self.tracker = ObjectTracker()
@@ -27,9 +27,12 @@ class VideoProcessor:
     def initialize_camera(self):
         try:
             if self.camera is None:
-                self.camera = cv2.VideoCapture('../resource/youtube5.mp4')
+                self.camera = cv2.VideoCapture(0)
                 if not self.camera.isOpened():
                     raise RuntimeError("카메라를 열 수 없습니다.")
+
+                self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 800)
+                self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 600)
             
                 # 카메라 설정 최적화
                 # self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
@@ -124,8 +127,10 @@ class VideoProcessor:
                         'message': 'Camera streaming stopped'
                     }))
                 elif command == 'resolution_change':
-                    new_width = data.get['width']
-                    new_height = data.get['height']
+                    data = data.get('data')
+                    new_width = data.get('width')
+                    new_height = data.get('height')
+
                     if new_width and new_height:
                         self.change_resolution(new_width, new_height)
                         await websocket.send(json.dumps({
