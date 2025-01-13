@@ -4,9 +4,10 @@ import json
 import cv2
 import base64 # 바이너리 데이터를 텍스트로 변환하기 위한 라이브러리
 import torch
+import numpy as np
 from datetime import datetime
 from ultralytics import YOLO
-from tracker import ObjectTracker
+from collections import defaultdict
 
 class VideoProcessor:
     def __init__(self):
@@ -19,10 +20,10 @@ class VideoProcessor:
         print(f"Using device: {self.device}")
         
         # YOLO 모델 로드 및 GPU 설정
-        self.yolo_model = YOLO("weights/integrated_train.pt")
+        self.yolo_model = YOLO("weights/pose.pt")
         self.yolo_model.to(self.device)
 
-        self.tracker = ObjectTracker()
+        self.track_history = defaultdict(lambda: [])
 
     def initialize_camera(self):
         try:
@@ -51,11 +52,38 @@ class VideoProcessor:
 
     def process_frame(self, frame):
         with torch.no_grad(): # 추론시 메모리 사용 감소
-            results = self.yolo_model(frame, conf = 0.7, iou = 0.5)
-            processed_frame = self.tracker.track_objects(frame, results[0].boxes)
-        
-        return processed_frame
-        # return results[0].plot
+            results = self.yolo_model.track(
+                source=frame, 
+                tracker="botsort.yaml", 
+                conf=0.5, 
+                iou=0.5, 
+                persist=True
+            )
+
+            result = results[0]
+            annotated_frame = result.plot()
+
+            if result.boxes.id is None:
+                return annotated_frame
+            
+            boxes = result.boxes.xywh.cpu()
+            track_ids = result.boxes.id.int().cpu().tolist()
+
+            for box, track_id in zip(boxes, track_ids):
+                x, y, w, h = box
+                track = self.track_history.get(track_id, [])
+                track.append((float(x), float(y)))
+
+                if len(track) > 10:
+                    track = track[-10:]
+
+                self.track_history[track_id] = track
+
+                if len(track) > 1:
+                    points = np.array(track, dtype=np.int32).reshape((-1, 1, 2))
+                    cv2.polylines(annotated_frame, [points], isClosed=False, color=(230, 230, 230), thickness=10)
+
+        return annotated_frame
 
     def change_resolution(self, width, height):
         if self.camera is not None and self.camera.isOpened():
