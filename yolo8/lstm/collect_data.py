@@ -12,64 +12,39 @@ class DataCollector:
     def __init__(self, video_path):
         self.video_path = video_path
         self.video = None
+        # lambda: []는 새로운 키에 접근할 때마다 빈 리스트를 자동으로 생성
         self.feature_history = defaultdict(lambda: [])
 
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         print(f"Using device: {self.device}")
 
-        self.model = YOLO("../weights/pose.pt")
+        self.model = YOLO('../weights/pose.pt')
         self.model.to(self.device)
 
     def initialize_video(self):
         self.video = cv2.VideoCapture(self.video_path)
+
         if not self.video.isOpened():
-            raise RuntimeError(f"비디오 파일을 열 수 없습니다: {self.video_path}")
+            raise RuntimeError(f'The video file cannot be opened: {self.video_path}')
 
         return self.video.isOpened()
 
-    def calculate_features(self, keypoints, bbox):
+    def calculate_features(self, keypoints):
         head, heart, tail = keypoints[:3]
+
+        head_to_heart = np.array([heart[0] - head[0], heart[1] - head[1]])
+        heart_to_tail = np.array([tail[0] - heart[0], tail[1] - heart[1]])
+
+        mean_direction = (head_to_heart + heart_to_tail) / 2
+        body_orientation = float(np.degrees(np.arctan2(mean_direction[1], mean_direction[0])))
     
+        # body_orientation 테스트중
         features = {
             'head_x': float(head[0]),
             'head_y': float(head[1]),
             'heart_x': float(heart[0]),
             'heart_y': float(heart[1]),
-            'tail_x': float(tail[0]),
-            'tail_y': float(tail[1]),
-        
-            'head_heart_angle': float(np.degrees(np.arctan2(
-                head[1] - heart[1],
-                head[0] - heart[0]
-            ))),
-            'heart_tail_angle': float(np.degrees(np.arctan2(
-                heart[1] - tail[1],
-                heart[0] - tail[0]
-            ))),
-        
-            'head_heart_dist': float(np.sqrt(
-                (head[0] - heart[0])**2 + 
-                (head[1] - heart[1])**2
-            )),
-            'heart_tail_dist': float(np.sqrt(
-                (heart[0] - tail[0])**2 + 
-                (heart[1] - tail[1])**2
-            )),
-        
-            'bbox_width': float(bbox[2]),
-            'bbox_height': float(bbox[3]),
-            'bbox_aspect_ratio': float(bbox[2] / bbox[3]),
-            'bbox_area': float(bbox[2] * bbox[3]),
-        
-            'body_length': float(np.sqrt(
-                (head[0] - tail[0])**2 + 
-                (head[1] - tail[1])**2
-            )),
-            'body_orientation': float(np.degrees(np.arctan2(
-                tail[1] - head[1],
-                tail[0] - head[0]
-            ))),
-        
+            'body_orientation': body_orientation,
             'timestamp': time.time()
         }
     
@@ -77,12 +52,14 @@ class DataCollector:
 
     def collect_data(self): 
         if not self.initialize_video():
-            print("비디오 초기화 실패")
+            print('Video initialization failed')
             return
 
         total_frames = int(self.video.get(cv2.CAP_PROP_FRAME_COUNT))
         processed_frames = 0
         prev_features = {}
+        # 100ms 이상 차이나는 프레임은 속도 계산 제외
+        max_time_gap = 0.1
 
         try:
             while True:
@@ -94,8 +71,8 @@ class DataCollector:
                     results = self.model.track(
                         source=frame,
                         tracker="botsort.yaml",
-                        conf=0.3,
-                        iou=0.3,
+                        conf=0.2,
+                        iou=0.2,
                         persist=True,
                     )
 
@@ -109,31 +86,41 @@ class DataCollector:
 
                     if len(track_ids) > 0:
                         max_conf_idx = confidences.argmax()
-                        box = boxes[max_conf_idx]
                         kpts = keypoints[max_conf_idx]
-
                         fixed_track_id = 0
 
-                        features = self.calculate_features(kpts, box)
+                        features = self.calculate_features(kpts)
 
                         if fixed_track_id in prev_features:
                             prev = prev_features[fixed_track_id]
                             time_diff = features['timestamp'] - prev['timestamp']
 
+                            if time_diff <= max_time_gap:
+                                features.update({
+                                    'velocity_x': (features['heart_x'] - prev['heart_x']) / time_diff,
+                                    'velocity_y': (features['heart_y'] - prev['heart_y']) / time_diff,
+                                    'angular_velocity': (features['body_orientation'] - prev['body_orientation']) / time_diff
+                                })
+                            else: 
+                                features.update({
+                                    'velocity_x': 0,
+                                    'velocity_y': 0,
+                                    'angular_velocity': 0
+                                })
+                        else:
                             features.update({
-                                'velocity_x': (features['heart_x'] - prev['heart_x']) / time_diff,
-                                'velocity_y': (features['heart_y'] - prev['heart_y']) / time_diff,
-                                'angular_velocity': (features['body_orientation'] - prev['body_orientation']) / time_diff,
-                                'size_change_rate': (features['body_length'] - prev['body_length']) / time_diff
+                                'velocity_x': 0,
+                                'velocity_y': 0,
+                                'angular_velocity': 0
                             })
-
+                        
                         prev_features[fixed_track_id] = features
                         self.feature_history[fixed_track_id].append(features)
 
                 processed_frames += 1
                 progress = (processed_frames / total_frames) * 100
-                print(f"\r처리 진행 중... {processed_frames}/{total_frames} 프레임 "
-                    f"({progress:.1f}%) 처리됨, 수집된 객체 수: {len(self.feature_history)}", 
+                print(f'\rProcessing... {processed_frames}/{total_frames} frames '
+                    f'({progress:.1f}%) Processed, Number of features collected: {len(self.feature_history[0])}', 
                     end='')
 
                 annotated_frame = result.plot()
@@ -142,7 +129,7 @@ class DataCollector:
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
         except KeyboardInterrupt:
-            print("\n사용자에 의해 중단되었습니다.")
+            print("\nStopped by user")
         finally:
             self.save_data()
             self.cleanup()
@@ -155,11 +142,10 @@ class DataCollector:
         with open(filename, 'wb') as f:
             pickle.dump(dict(self.feature_history), f)
 
-        tracked_frames = len(self.feature_history[0]) if 0 in self.feature_history else 0
+        total_frames = len(self.feature_history[0]) if 0 in self.feature_history else 0
         
-        print(f"\n데이터가 저장되었습니다: {filename}")
-        print(f"수집된 총 객체 수: {len(self.feature_history)}")
-        print(f"추적된 프레임 수: {tracked_frames}")
+        print(f"\nData has been saved: {filename}")
+        print(f"Number of tracked frames: {total_frames}")
 
     def cleanup(self):
         if self.video is not None:
@@ -167,7 +153,7 @@ class DataCollector:
             cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    video_path = "../../resource/giant.mp4"  # 실제 비디오 파일 경로로 변경
+    video_path = "../../resource/giant.mp4" 
     collector = DataCollector(video_path)
     collector.collect_data()
 
