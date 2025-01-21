@@ -21,6 +21,14 @@ class HornetSequenceCollector:
         self.df.to_csv(output_file, index=False)
 
     def get_coordinates(self, thorax, head, abdomen):
+        # 좌표가 0인 경우는 None 처리
+        if thorax is not None and thorax[0] == 0 and thorax[1] == 0:
+            thorax = None
+        if head is not None and head[0] == 0 and head[1] == 0:
+            head = None
+        if abdomen is not None and abdomen[0] == 0 and abdomen[1] == 0:
+            abdomen = None
+
         if thorax is not None:
             return thorax[0], thorax[1]
         elif head is not None:
