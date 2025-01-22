@@ -59,8 +59,8 @@ class HornetSequenceCollector:
         new_data = {
             'tracking_id': self.tracking_id,
             'datetime': datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f'),
-            'x': x,
-            'y': y
+            'x': round(x, 2),
+            'y': round(y, 2)
         }
 
         # DataFrame에 추가하고 CSV 파일에 저장
