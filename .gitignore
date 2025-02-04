@@ -3,3 +3,8 @@ runs
 resource
 
 *.pt
+*.pth
+*.pyc
+*.csv
+
+lstm
