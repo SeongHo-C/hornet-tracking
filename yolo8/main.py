@@ -4,10 +4,12 @@ import json
 import cv2
 import base64 # 바이너리 데이터를 텍스트로 변환하기 위한 라이브러리
 import torch
+import os
 import numpy as np
 from datetime import datetime
 from ultralytics import YOLO
 from collections import defaultdict
+from transformer.model import TransAm
 
 class VideoProcessor:
     def __init__(self):
@@ -17,31 +19,33 @@ class VideoProcessor:
 
         # CUDA(GPU) 사용 가능 여부 확인
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        print(f"Using device: {self.device}")
+        print(f'Using device: {self.device}')
         
         # YOLO 모델 로드 및 GPU 설정
         self.yolo_model = YOLO("weights/pose.pt")
         self.yolo_model.to(self.device)
 
+        # Transformer 모델 로드
+        self.trans_model = TransAm(2, 3).to(self.device)
+        model_path = os.path.join(os.path.dirname(__file__), 'transformer/hornet_model.pth')
+        self.trans_model.load_state_dict(torch.load(model_path))
+        self.trans_model.eval()
+
         self.track_history = defaultdict(lambda: [])
+        self.prediction_history = {}
 
     def initialize_camera(self):
         try:
             if self.camera is None:
-                self.camera = cv2.VideoCapture(0)
+                self.camera = cv2.VideoCapture('../resource/giant.mp4')
                 if not self.camera.isOpened():
                     raise RuntimeError("카메라를 열 수 없습니다.")
 
                 self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 800)
                 self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 600)
             
-                # 카메라 설정 최적화
-                # self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-                # self.camera.set(cv2.CAP_PROP_FPS, 30)
-                # self.camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-
         except Exception as e:
-            print(f"Camera initialization error: {e}")
+            print(f'Camera initialization error: {e}')
             self.release_camera()
             raise
 
@@ -49,6 +53,31 @@ class VideoProcessor:
         if self.camera is not None:
             self.camera.release()
             self.camera = None
+
+    def predict_future_positions(self, track_history):
+        if len(track_history) < 25:  # 최소 25개의 포인트가 필요
+            return None
+            
+        # 최근 25개 포인트 사용
+        recent_points = np.array(track_history[-25:])
+        
+        # 입력 정규화
+        normalized_input = recent_points.copy()
+        normalized_input[:, 0] = normalized_input[:, 0] / 800
+        normalized_input[:, 1] = normalized_input[:, 1] / 600
+        
+        # 텐서로 변환
+        normalized_input = torch.from_numpy(normalized_input).float().unsqueeze(0).to(self.device)
+        
+        with torch.no_grad():
+            output = self.trans_model(normalized_input)
+            
+            # 예측값 역정규화
+            predicted_coords = output.squeeze(0).cpu().numpy()
+            predicted_coords[:, 0] = predicted_coords[:, 0] * 800
+            predicted_coords[:, 1] = predicted_coords[:, 1] * 600
+            
+            return predicted_coords
 
     def process_frame(self, frame):
         with torch.no_grad(): # 추론시 메모리 사용 감소
@@ -71,17 +100,33 @@ class VideoProcessor:
 
             for box, track_id in zip(boxes, track_ids):
                 x, y, w, h = box
-                track = self.track_history.get(track_id, [])
+                track = self.track_history[0]
                 track.append((float(x), float(y)))
 
-                if len(track) > 10:
-                    track = track[-10:]
+                if len(track) > 30:
+                    track = track[-30:]
 
-                self.track_history[track_id] = track
+                self.track_history[0] = track
 
                 if len(track) > 1:
                     points = np.array(track, dtype=np.int32).reshape((-1, 1, 2))
                     cv2.polylines(annotated_frame, [points], isClosed=False, color=(230, 230, 230), thickness=10)
+
+                # 예측 수행 및 시각화
+                if len(track) >= 25:
+                    predicted_positions = self.predict_future_positions(track)
+                    if predicted_positions is not None:
+                        # 예측 경로 시각화 (빨간색)
+                        pred_points = np.array(predicted_positions, dtype=np.int32).reshape((-1, 1, 2))
+                        cv2.polylines(annotated_frame, [pred_points], isClosed=False, color=(0, 0, 255), thickness=3)
+                        
+                        # 예측 포인트 표시
+                        for i, (pred_x, pred_y) in enumerate(predicted_positions):
+                            cv2.circle(annotated_frame, (int(pred_x), int(pred_y)), 
+                                     radius=3, color=(0, 0, 255), thickness=-1)
+                            cv2.putText(annotated_frame, str(i), (int(pred_x), int(pred_y)),
+                                      cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+
 
         return annotated_frame
 
